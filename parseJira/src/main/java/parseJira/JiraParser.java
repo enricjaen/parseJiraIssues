@@ -7,9 +7,11 @@ import java.net.URISyntaxException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.IsoFields;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.commons.lang.ArrayUtils;
@@ -52,10 +54,10 @@ public class JiraParser {
     private static String JIRA_ADMIN_PASSWORD;
     private static String JIRA_PROJECT;
 
-    private static Map<YearWeek,MutableInt> doneByWeek = new HashMap<YearWeek,MutableInt>();
+    private static Map<YearWeek,MutableInt> doneByWeek = new TreeMap<YearWeek,MutableInt>();
 
     
-    public static class YearWeek {
+    public static class YearWeek implements Comparable<YearWeek>{
         int year;
         int week;
         @Override
@@ -69,10 +71,21 @@ public class JiraParser {
                 return new EqualsBuilder().append(year,other.year).append(week, other.week).isEquals();
             }else return false;
         }
+
+        // - this < other 
+        // + this > other
+        public int compareTo(YearWeek other) {
+            if (year > other.year) return 1;
+            if (year == other.year && week>other.week) return 1;
+            if (year == other.year && week==other.week) return 0;
+            return -1;
+        }
+
         @Override
         public String toString() {
             return year + "-"+ week;
         }
+        
     }
     
     public static void main(String[] args) throws URISyntaxException, JsonProcessingException, IOException, InterruptedException, ExecutionException {
@@ -107,18 +120,26 @@ public class JiraParser {
         URI uri = new URI(JIRA_URL);
         JiraRestClient client = factory.createWithBasicHttpAuthentication(uri, JIRA_ADMIN_USERNAME, JIRA_ADMIN_PASSWORD);
         //Promise<User> promise = client.getUserClient().getUser("admin");
-        String jql="project in ("+JIRA_PROJECT+") AND status was \"In progress\" by currentUser() AND status was \"Ready for QA\" by currentUser() ";       
-        Promise<SearchResult> searchJqlPromise = client.getSearchClient().searchJql(jql);
-        SearchResult result = searchJqlPromise.claim();
-        //System.out.println(     client.getIssueClient().getIssue("CD-1385").claim().toString() );
+        int startAt=0;
+        int total=0;
+        int maxResults=50;
+        do {
+            String jql="project in ("+JIRA_PROJECT+") AND status was \"In progress\" by currentUser() AND status was \"Ready for QA\" by currentUser()";       
+            Promise<SearchResult> searchJqlPromise = client.getSearchClient().searchJql(jql,maxResults,startAt);
+            SearchResult result = searchJqlPromise.claim();
+            //System.out.println(     client.getIssueClient().getIssue("CD-1385").claim().toString() );while
+            System.out.println("\n processing next "+(startAt+maxResults));
+            for (BasicIssue issue : result.getIssues()) {
+                //System.out.println(issue.getKey() +" " + issue.getSelf());
+                System.out.print(issue.getKey()+",");
+                printDuration(issue.getKey(), issue.getSelf().toString());
+            }   
+            startAt+=50;
+            total =result.getTotal();
+        } while (startAt+maxResults < total); 
+        
 
-        for (BasicIssue issue : result.getIssues()) {
-            //System.out.println(issue.getKey() +" " + issue.getSelf());
-            printDuration(issue.getKey(), issue.getSelf().toString());
-        }    
-        System.out.println("\n"+result.getTotal());
-
-        System.out.println(doneByWeek);
+        System.out.println("\n"+doneByWeek);
 
     }
 
@@ -166,7 +187,7 @@ public class JiraParser {
                 ObjectMapper mapper = new ObjectMapper();
                 JsonNode root = mapper.readTree(json);
                 JsonNode result = expression.search(root);
-                System.out.println(key + " "+result);
+//                System.out.println(key + " "+result);
 //                Duration duration=Duration.ZERO;
 //                LocalDateTime end=null; 
                 int readytoQAWeek=0;
